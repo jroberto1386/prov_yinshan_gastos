@@ -1,5 +1,6 @@
 # ─────────────────────────────────────────────
 #  app.py  —  Pólizas de Provisión de Gastos
+#  v2 — compatible con motor v2 (bajo RAM)
 # ─────────────────────────────────────────────
 
 import io
@@ -8,7 +9,7 @@ import uuid
 import threading
 from flask import Flask, request, jsonify, send_file, render_template
 
-from motor import procesar_excel, generar_polizas, generar_altas, generar_catalogo_cuentas
+from motor import procesar_excel, generar_altas, generar_catalogo_cuentas
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB
@@ -43,23 +44,24 @@ def procesar():
 
     def run():
         try:
-            def cb(done, total):
+            def cb(done, _total):
                 JOBS[job_id]["progreso"] = done
-                JOBS[job_id]["total"]    = total
 
-            facturas, nuevos, stats, ultimo_cod = procesar_excel(
-                facturas_bytes, catalogo_bytes, num_pol, cb
-            )
+            # procesar_excel ahora genera las pólizas en un solo pase
+            # y devuelve también plantilla_row y header_rows para generar_altas
+            polizas_bytes, nuevos, stats, ultimo_cod, plantilla_row, header_rows = \
+                procesar_excel(facturas_bytes, catalogo_bytes, num_pol, cb)
 
-            polizas_xlsx = generar_polizas(facturas, num_pol)
-            altas_xlsx   = generar_altas(nuevos, ultimo_cod, catalogo_bytes) if nuevos else None
-            cuentas_xlsx = generar_catalogo_cuentas(nuevos) if nuevos else None
+            altas_bytes   = generar_altas(nuevos, ultimo_cod, plantilla_row, header_rows) \
+                            if nuevos else None
+            cuentas_bytes = generar_catalogo_cuentas(nuevos) if nuevos else None
 
-            JOBS[job_id]["resultado_polizas"] = polizas_xlsx
-            JOBS[job_id]["resultado_altas"]   = altas_xlsx
-            JOBS[job_id]["resultado_cuentas"] = cuentas_xlsx
+            JOBS[job_id]["resultado_polizas"] = polizas_bytes
+            JOBS[job_id]["resultado_altas"]   = altas_bytes
+            JOBS[job_id]["resultado_cuentas"] = cuentas_bytes
             JOBS[job_id]["stats"]  = stats
             JOBS[job_id]["estado"] = "listo"
+
         except Exception as e:
             import traceback
             JOBS[job_id]["estado"] = "error"
@@ -75,11 +77,11 @@ def progreso(job_id):
     if not job:
         return jsonify({"error": "Job no encontrado"}), 404
     return jsonify({
-        "estado":   job["estado"],
-        "progreso": job["progreso"],
-        "total":    job["total"],
-        "stats":    job["stats"],
-        "error":    job["error"],
+        "estado":        job["estado"],
+        "progreso":      job["progreso"],
+        "total":         job["total"],
+        "stats":         job["stats"],
+        "error":         job["error"],
         "tiene_altas":   job["resultado_altas"]   is not None,
         "tiene_cuentas": job["resultado_cuentas"] is not None,
     })
@@ -125,4 +127,5 @@ def descargar_altas(job_id):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5051, debug=False)
+    port = int(os.environ.get("PORT", 5051))
+    app.run(host="0.0.0.0", port=port, debug=False)
