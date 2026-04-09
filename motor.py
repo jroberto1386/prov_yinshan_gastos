@@ -24,6 +24,17 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill
 from openpyxl.cell import WriteOnlyCell
 
+def _es_nan(val):
+    """Verifica NaN/None de forma segura sin depender de pandas.
+    Necesario para valores que vienen de openpyxl (no de DataFrames)."""
+    if val is None:
+        return True
+    if isinstance(val, float):
+        import math
+        return math.isnan(val)
+    return False
+
+
 from config import (
     CTA_IVA_16, CTA_IVA_8, CTA_IEPS,
     CTA_RET_IVA, CTA_RET_ISR_GENERAL, CTA_RET_ISR_ARRENDAM,
@@ -565,7 +576,7 @@ def generar_altas(nuevos_provs, ultimo_codigo, plantilla_row, header_rows):
 
     for row_i, src_row in enumerate(header_rows, 1):
         for col_i, val in enumerate(src_row, 1):
-            v = None if (isinstance(val, float) and pd.isna(val)) else val
+            v = None if _es_nan(val) else val
             c = ws.cell(row_i, col_i, v)
             c.font = Font(bold=True, size=9)
             c.fill = dfill
@@ -575,7 +586,7 @@ def generar_altas(nuevos_provs, ultimo_codigo, plantilla_row, header_rows):
         data_row = [None] * max(30, len(plantilla_row))
 
         for ci, v in enumerate(plantilla_row):
-            if not (isinstance(v, float) and pd.isna(v)):
+            if not _es_nan(v):
                 data_row[ci] = v
 
         data_row[0]  = "P1"
