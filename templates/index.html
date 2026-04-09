@@ -199,8 +199,9 @@
   <div class="section-label">03 · Resultado</div>
   <div class="stats-grid" id="stats-grid"></div>
   <div class="dl-grid">
-    <button id="btn-polizas" class="btn-dl primary" disabled>⬇ Pólizas CONTPAQi (.xlsx)</button>
-    <button id="btn-altas"   class="btn-dl secondary" disabled>⬇ Alta Nuevos Proveedores (.xlsx)</button>
+    <button id="btn-polizas"  class="btn-dl primary"   disabled>⬇ Pólizas CONTPAQi (.xlsx)</button>
+    <button id="btn-cuentas"  class="btn-dl secondary" disabled>⬇ Alta Catálogo Cuentas (.xlsx)</button>
+    <button id="btn-altas"    class="btn-dl secondary" disabled>⬇ Alta Nuevos Proveedores (.xlsx)</button>
   </div>
 </div>
 
@@ -316,8 +317,8 @@
     const btnAltas   = document.getElementById("btn-altas");
     btnCuentas.disabled = !tieneCuentas;
     btnAltas.disabled   = !tieneAltas;
-    if (!tieneCuentas) { btnCuentas.textContent = "1 · ✓ Sin cuentas nuevas"; }
-    if (!tieneAltas)   { btnAltas.textContent   = "2 · ✓ Sin proveedores nuevos"; }
+    if (!tieneCuentas) { btnCuentas.textContent = "✓ Sin cuentas nuevas"; }
+    if (!tieneAltas)   { btnAltas.textContent   = "✓ Sin proveedores nuevos"; }
   }
 
   // ── Descargas ──
