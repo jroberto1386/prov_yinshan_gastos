@@ -238,7 +238,7 @@ def cargar_catalogo(catalogo_bytes):
         except (ValueError, TypeError):
             cta_prov = None
         try:
-            cta_gasto = int(float(r[26])) if not pd.isna(r[26]) else CTA_GASTO_DEFAULT
+            cta_gasto = int(float(r[26])) if not _es_nan(r[26]) else CTA_GASTO_DEFAULT
         except (ValueError, TypeError):
             cta_gasto = CTA_GASTO_DEFAULT
         try:
