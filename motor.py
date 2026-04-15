@@ -444,15 +444,18 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
             ws_out.append(["M1", int(CTA_IVA_8), ref, 0, iva8_s, int(ID_DIARIO), 0, nombre_catalogo])
 
         # ── M1 Retención IVA (Haber) ──
+        # Nota de crédito: ret_iva_s es negativo → se mantiene negativo en Haber para cuadrar
         if abs(ret_iva_s) > 0:
-            ws_out.append(["M1", int(CTA_RET_IVA), ref, 1, abs(ret_iva_s), int(ID_DIARIO), 0, nombre_catalogo])
+            ws_out.append(["M1", int(CTA_RET_IVA), ref, 1, ret_iva_s, int(ID_DIARIO), 0, nombre_catalogo])
 
         # ── M1 Retención ISR (Haber) ──
         if abs(ret_isr_s) > 0:
-            ws_out.append(["M1", int(cta_ret_isr), ref, 1, abs(ret_isr_s), int(ID_DIARIO), 0, nombre_catalogo])
+            ws_out.append(["M1", int(cta_ret_isr), ref, 1, ret_isr_s, int(ID_DIARIO), 0, nombre_catalogo])
 
         # ── M1 Proveedor (Haber) ──
-        ws_out.append(["M1", int(cta_prov), ref, 1, abs(neto_prov_s), int(ID_DIARIO), 0, nombre_catalogo])
+        # Factura: neto_prov_s > 0 → Haber positivo (pasivo aumenta)
+        # Nota de crédito: neto_prov_s < 0 → Haber negativo (pasivo disminuye)
+        ws_out.append(["M1", int(cta_prov), ref, 1, neto_prov_s, int(ID_DIARIO), 0, nombre_catalogo])
 
         # ── AD UUID ──
         if uuid:
