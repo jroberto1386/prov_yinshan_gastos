@@ -154,6 +154,57 @@ _CUENTA_FIJA = {
 }
 
 
+# ── Mapeo de columnas por formato de descargador ─────
+# Cada formato describe en qué índice (0-based) viene cada campo.
+# El campo `ish2` se suma a `ish` cuando existe (el formato nuevo
+# tiene dos columnas casi idénticas "Local trasladado (ISH)" y
+# "Local traslado (ISH)" — por un typo del descargador).
+# `tot_traslad` puede ser None: en ese caso se usa iva16 directo.
+
+COLUMNAS_FORMATO_V1 = {  # Descargador anterior
+    "tipo": 3, "fecha": 4, "serie": 8, "folio": 9, "uuid": 10,
+    "rfc_emisor": 12, "nombre": 13, "subtotal": 20, "descuento": 21,
+    "iva16": 23, "ret_iva": 24, "ret_isr": 25, "ish": 26, "ish2": None,
+    "total": 27, "tot_traslad": 29, "concepto": 40, "iva8": 56,
+    "ieps_0": None, "ieps_3": None,
+}
+
+COLUMNAS_FORMATO_V2 = {  # Descargador nuevo (header "Periodo, Version, UUID...")
+    "tipo": 8, "fecha": 9, "serie": 6, "folio": 7, "uuid": 2,
+    "rfc_emisor": 13, "nombre": 14, "subtotal": 41, "descuento": 42,
+    "iva16": 45, "ret_iva": 47, "ret_isr": 48, "ish": 53, "ish2": 54,
+    "total": 56, "tot_traslad": None, "concepto": 20, "iva8": 44,
+    "ieps_0": None, "ieps_3": 50,  # IEPS 0% es base imponible (impuesto $0); solo IEPS 3% es impuesto causado
+}
+
+
+def _detectar_formato(header_row):
+    """Detecta formato del Excel de facturas leyendo la fila de encabezado.
+    Devuelve el dict de mapeo de columnas correspondiente."""
+    if not header_row:
+        return COLUMNAS_FORMATO_V1
+    h0 = _s(header_row[0]).lower()
+    h2 = _s(header_row[2]).lower() if len(header_row) > 2 else ""
+    if h0 == "periodo" and h2 == "uuid":
+        return COLUMNAS_FORMATO_V2
+    return COLUMNAS_FORMATO_V1
+
+
+def _normalizar_tipo(val):
+    """Normaliza el tipo de documento entre formatos.
+    V1: 'Factura' / 'NotaCredito'
+    V2: 'I - Ingreso' / 'E - Egreso'
+    Devuelve 'Factura', 'NotaCredito' o None si no aplica."""
+    s = _s(val).lower()
+    if not s:
+        return None
+    if s.startswith("factura") or s == "i" or s.startswith("i -") or s.startswith("i-"):
+        return "Factura"
+    if s.startswith("notacredito") or s.startswith("nota") or s == "e" or s.startswith("e -") or s.startswith("e-"):
+        return "NotaCredito"
+    return None
+
+
 # ── Helpers ───────────────────────────────────
 
 def _f(val, default=0.0):
@@ -297,7 +348,7 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
     # Contadores para stats (no acumulamos dicts)
     cnt = {
         "procesadas": 0, "facturas": 0, "notas_credito": 0,
-        "con_iva8": 0, "con_ret_iva": 0, "con_ret_isr": 0,
+        "con_iva8": 0, "con_ieps": 0, "con_ret_iva": 0, "con_ret_isr": 0,
         "arrendamiento": 0, "proveedores_nuevos_set": set(),
     }
 
@@ -315,7 +366,8 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
     wb_in = openpyxl.load_workbook(io.BytesIO(excel_bytes), read_only=True, data_only=True)
     ws_in = wb_in.active
     rows_iter = ws_in.iter_rows(values_only=True)
-    next(rows_iter)  # saltar fila de headers
+    header_row = next(rows_iter)  # leer fila de headers y detectar formato
+    COLS = _detectar_formato(header_row)
 
     # Contar total aproximado para callback (no usamos max_row en read_only — puede ser None)
     # Usamos un contador incremental en su lugar
@@ -346,22 +398,22 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
         if callback:
             callback(total_procesado, total_procesado)  # total desconocido en read_only
 
-        tipo = _s(row[3])
-        if tipo not in ("Factura", "NotaCredito"):
+        tipo = _normalizar_tipo(row[COLS["tipo"]])
+        if tipo is None:
             continue
 
         es_nota = (tipo == "NotaCredito")
         signo   = -1 if es_nota else 1
 
-        rfc_emisor   = _s(row[12])
-        nombre       = _s(row[13])
-        serie        = _s(row[8])
-        folio        = _s(row[9])
-        uuid         = _s(row[10]).upper()
-        concepto_txt = _s(row[40])
+        rfc_emisor   = _s(row[COLS["rfc_emisor"]])
+        nombre       = _s(row[COLS["nombre"]])
+        serie        = _s(row[COLS["serie"]])
+        folio        = _s(row[COLS["folio"]])
+        uuid         = _s(row[COLS["uuid"]]).upper()
+        concepto_txt = _s(row[COLS["concepto"]])
 
         # Fecha — siempre datetime real con yyyymmdd
-        fecha_raw = row[4]
+        fecha_raw = row[COLS["fecha"]]
         try:
             if isinstance(fecha_raw, datetime):
                 fecha = fecha_raw
@@ -373,19 +425,32 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
             except Exception:
                 fecha = None
 
-        subtotal    = _f(row[20])
-        descuento   = _f(row[21])
-        iva16_col   = _f(row[23])
-        ret_iva     = _f(row[24])
-        ret_isr     = _f(row[25])
-        ish         = _f(row[26])
-        total_cfdi  = _f(row[27])
-        tot_traslad = _f(row[29])
-        iva8        = _f(row[56])
+        subtotal    = _f(row[COLS["subtotal"]])
+        descuento   = _f(row[COLS["descuento"]])
+        iva16_col   = _f(row[COLS["iva16"]])
+        ret_iva     = _f(row[COLS["ret_iva"]])
+        ret_isr     = _f(row[COLS["ret_isr"]])
+        ish         = _f(row[COLS["ish"]])
+        if COLS["ish2"] is not None:
+            ish += _f(row[COLS["ish2"]])
+        total_cfdi  = _f(row[COLS["total"]])
+        iva8        = _f(row[COLS["iva8"]])
 
-        iva_declarado = round(iva16_col + iva8, 2)
-        if abs(iva_declarado - tot_traslad) > 0.05 and tot_traslad > 0:
-            iva16 = round(tot_traslad - iva8, 2)
+        # IEPS trasladado (suma de tasas 0% y 3% — solo formatos que lo exponen)
+        ieps = 0.0
+        if COLS["ieps_0"] is not None:
+            ieps += _f(row[COLS["ieps_0"]])
+        if COLS["ieps_3"] is not None:
+            ieps += _f(row[COLS["ieps_3"]])
+
+        # Reconciliación IVA: solo si el formato trae "Total trasladados"
+        if COLS["tot_traslad"] is not None:
+            tot_traslad = _f(row[COLS["tot_traslad"]])
+            iva_declarado = round(iva16_col + iva8, 2)
+            if abs(iva_declarado - tot_traslad) > 0.05 and tot_traslad > 0:
+                iva16 = round(tot_traslad - iva8, 2)
+            else:
+                iva16 = iva16_col
         else:
             iva16 = iva16_col
 
@@ -417,6 +482,7 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
         gasto_neto_s = round(signo * gasto_neto, 2)
         iva16_s      = round(signo * iva16, 2)
         iva8_s       = round(signo * iva8, 2)
+        ieps_s       = round(signo * ieps, 2)
         ret_iva_s    = round(signo * ret_iva, 2)
         ret_isr_s    = round(signo * ret_isr, 2)
         neto_prov_s  = round(signo * neto_prov, 2)
@@ -442,6 +508,10 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
         # ── M1 IVA 8% (Debe) ──
         if abs(iva8_s) > 0:
             ws_out.append(["M1", int(CTA_IVA_8), ref, 0, iva8_s, int(ID_DIARIO), 0, nombre_catalogo])
+
+        # ── M1 IEPS (Debe) ──
+        if abs(ieps_s) > 0:
+            ws_out.append(["M1", int(CTA_IEPS), ref, 0, ieps_s, int(ID_DIARIO), 0, nombre_catalogo])
 
         # ── M1 Retención IVA (Haber) ──
         # Nota de crédito: ret_iva_s es negativo → se mantiene negativo en Haber para cuadrar
@@ -471,6 +541,8 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
             cnt["facturas"] += 1
         if abs(iva8_s) > 0:
             cnt["con_iva8"] += 1
+        if abs(ieps_s) > 0:
+            cnt["con_ieps"] += 1
         if abs(ret_iva_s) > 0:
             cnt["con_ret_iva"] += 1
         if abs(ret_isr_s) > 0:
@@ -492,6 +564,7 @@ def procesar_excel(excel_bytes, catalogo_bytes, num_poliza_inicio, callback=None
         "facturas":          cnt["facturas"],
         "notas_credito":     cnt["notas_credito"],
         "con_iva8":          cnt["con_iva8"],
+        "con_ieps":          cnt["con_ieps"],
         "con_ret_iva":       cnt["con_ret_iva"],
         "con_ret_isr":       cnt["con_ret_isr"],
         "arrendamiento":     cnt["arrendamiento"],
